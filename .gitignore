@@ -1,0 +1,39 @@
+﻿# Python 字节码与构建缓存
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.Python
+
+# 环境变量文件（含 API Key 等敏感信息），禁止提交到仓库
+.env
+
+# Chroma 向量数据库持久化目录，运行后自动生成
+chroma_db/
+
+# 评估报告与测试数据（本地生成，不纳入版本控制）
+eval_report.md
+eval_questions.json
+
+# IDE 配置文件
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 运行日志
+*.log
+
+# 知识库文档目录（用户自行放置，不提交空目录内容）
+data/docs/*.pdf
+data/docs/*.txt
+!data/docs/.gitkeep
+
+# Git 自身
+*.orig
