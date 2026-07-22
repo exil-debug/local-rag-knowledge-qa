@@ -1,7 +1,7 @@
 ﻿"""DeepSeek-V4 对话接口封装模块
 
 基于 OpenAI 兼容接口调用 DeepSeek-V4 大模型。
-API Key 统一从环境变量读取，禁止硬编码。
+API Key 及模型参数从 config 模块或环境变量读取，禁止硬编码。
 """
 
 import os
@@ -10,6 +10,8 @@ from typing import Optional, List, Dict
 import requests
 from dotenv import load_dotenv
 
+from config import config
+
 load_dotenv()
 
 
@@ -17,10 +19,10 @@ class DeepSeekClient:
     """DeepSeek-V4 API 客户端，封装对话生成接口。"""
 
     def __init__(self, api_key=None, api_base=None, model=None):
-        """初始化客户端。参数优先使用传入值，否则从环境变量读取。"""
-        self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY", "").strip()
-        self.api_base = api_base or os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com").strip()
-        self.model = model or os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip()
+        """初始化客户端。参数优先使用传入值，否则从 config 读取。"""
+        self.api_key = api_key or config.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY", "").strip()
+        self.api_base = api_base or config.deepseek_api_base
+        self.model = model or config.deepseek_model
         if not self.api_key:
             raise ValueError("DeepSeek API Key 未配置！请检查 .env 文件。")
         self._session = requests.Session()

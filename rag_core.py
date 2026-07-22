@@ -16,22 +16,17 @@ from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 
+from config import config
+
 load_dotenv()
 
-# 配置日志，方便追踪文档加载和检索过程中的异常
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def _get_env(key, default=""):
-    """安全读取环境变量，返回 strip 后的值或默认值。"""
-    return os.getenv(key, default).strip()
-
-
 # ---------- 文档加载 ----------
 
-# 常见的文本编码列表，用于自动检测中文文档编码
-# 按使用频率排序，优先尝试 UTF-8
+# 常见文本编码列表，用于自动检测中文文档编码
 _ENCODING_CANDIDATES = ["utf-8", "gbk", "gb2312", "gb18030", "utf-16", "latin-1"]
 
 
@@ -40,15 +35,6 @@ def _detect_and_read_text(filepath):
 
     按优先级依次尝试常见编码，UTF-8 失败后自动回退到 GBK 等中文编码。
     所有编码均失败后抛出最后的异常，由上层调用方处理。
-
-    Args:
-        filepath: 文本文件路径
-
-    Returns:
-        读取的文本内容字符串
-
-    Raises:
-        UnicodeDecodeError: 所有编码尝试均失败
     """
     for enc in _ENCODING_CANDIDATES:
         try:
@@ -56,7 +42,6 @@ def _detect_and_read_text(filepath):
                 return f.read()
         except UnicodeDecodeError:
             continue
-    # 所有编码均失败，抛出原始异常
     raise UnicodeDecodeError(f"无法解码文件 {filepath}，已尝试编码: {_ENCODING_CANDIDATES}")
 
 
@@ -64,24 +49,20 @@ def load_documents(docs_dir=None):
     """从指定目录加载所有 PDF 和 TXT 文件。
 
     参数说明：
-        docs_dir: 文档目录路径，默认从环境变量 DOCS_DIR 读取
+        docs_dir: 文档目录路径，默认从 config 读取
 
     返回：LangChain Document 列表
-
-    异常处理：单个文件加载失败不会中断整体流程，失败文件会记录日志。
     """
     if docs_dir is None:
-        docs_dir = _get_env("DOCS_DIR", "./data/docs")
+        docs_dir = config.docs_dir
     docs_dir = os.path.abspath(docs_dir)
     if not os.path.isdir(docs_dir):
         os.makedirs(docs_dir, exist_ok=True)
         logger.info("文档目录不存在，已自动创建: %s", docs_dir)
         return []
-
     documents = []
     supported_ext = (".pdf", ".txt")
     fail_count = 0
-
     for filename in sorted(os.listdir(docs_dir)):
         filepath = os.path.join(docs_dir, filename)
         ext = os.path.splitext(filename)[1].lower()
@@ -92,7 +73,6 @@ def load_documents(docs_dir=None):
                 loader = PyPDFLoader(filepath)
                 docs = loader.load()
             else:
-                # 使用多编码兼容方案读取 TXT 文件
                 text = _detect_and_read_text(filepath)
                 docs = [Document(page_content=text, metadata={"source": filepath})]
             for doc in docs:
@@ -102,9 +82,7 @@ def load_documents(docs_dir=None):
             logger.info("已加载 %s (%d 页)", filename, len(docs))
         except Exception as e:
             fail_count += 1
-            # 单文件失败仅记录日志，不阻塞其他文件的入库
             logger.error("加载失败已跳过: %s - %s", filename, e)
-
     if fail_count > 0:
         logger.warning("本次入库共 %d 个文件加载失败，已自动跳过", fail_count)
     return documents
@@ -113,21 +91,13 @@ def load_documents(docs_dir=None):
 # ---------- 文本分块 ----------
 
 def split_documents(documents, chunk_size=None, chunk_overlap=None):
-    """将文档按中文标点优先策略递归切分为固定大小的文本块。
-
-    参数说明：
-        documents: 原始文档列表
-        chunk_size: 每块字符数
-        chunk_overlap: 块间重叠字符数
-
-    返回：切分后的 Document 列表
-    """
+    """将文档按中文标点优先策略递归切分为固定大小的文本块。"""
     if not documents:
         return []
     if chunk_size is None:
-        chunk_size = int(_get_env("CHUNK_SIZE", "500"))
+        chunk_size = config.chunk_size
     if chunk_overlap is None:
-        chunk_overlap = int(_get_env("CHUNK_OVERLAP", "100"))
+        chunk_overlap = config.chunk_overlap
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
@@ -144,7 +114,7 @@ def split_documents(documents, chunk_size=None, chunk_overlap=None):
 def get_embeddings(model_name=None):
     """获取 HuggingFace 嵌入模型实例。"""
     if model_name is None:
-        model_name = _get_env("EMBEDDING_MODEL_NAME", "BAAI/bge-small-zh-v1.5")
+        model_name = config.embedding_model_name
     return HuggingFaceEmbeddings(
         model_name=model_name,
         model_kwargs={"device": "cpu"},
@@ -155,7 +125,7 @@ def get_embeddings(model_name=None):
 def get_vector_store(persist_dir=None, embedding_model=None):
     """加载或创建 Chroma 向量数据库实例。"""
     if persist_dir is None:
-        persist_dir = _get_env("CHROMA_DB_DIR", "./chroma_db")
+        persist_dir = config.chroma_db_dir
     if embedding_model is None:
         embedding_model = get_embeddings()
     return Chroma(
@@ -166,10 +136,7 @@ def get_vector_store(persist_dir=None, embedding_model=None):
 
 
 def ingest_documents(docs_dir=None, chunk_size=None, chunk_overlap=None, persist_dir=None):
-    """完整的「加载 -> 切分 -> 入库」流水线。
-
-    返回：入库的文本块数量
-    """
+    """完整的「加载 -> 切分 -> 入库」流水线。"""
     logger.info("=" * 50)
     logger.info("开始文档入库流程...")
     logger.info("=" * 50)
@@ -180,7 +147,7 @@ def ingest_documents(docs_dir=None, chunk_size=None, chunk_overlap=None, persist
     chunks = split_documents(docs, chunk_size, chunk_overlap)
     embedding_model = get_embeddings()
     if persist_dir is None:
-        persist_dir = _get_env("CHROMA_DB_DIR", "./chroma_db")
+        persist_dir = config.chroma_db_dir
     logger.info("向量化并写入 Chroma (持久化路径: %s) ...", persist_dir)
     Chroma.from_documents(
         documents=chunks,
@@ -195,27 +162,19 @@ def ingest_documents(docs_dir=None, chunk_size=None, chunk_overlap=None, persist
 # ---------- 语义检索 ----------
 
 def retrieve_context(query, k=None, store=None, persist_dir=None):
-    """对用户问题进行语义检索，返回最相关的 k 个文档片段。
-
-    参数说明：
-        query: 用户问题
-        k: 返回片段数（默认 4）
-        store: 已存在的 Chroma 实例
-
-    返回：按相关性降序排列的 Document 列表
-    """
+    """对用户问题进行语义检索，返回最相关的文档片段。"""
     if k is None:
-        k = int(_get_env("RETRIEVAL_TOP_K", "4"))
+        k = config.retrieval_top_k
     if store is None:
         if persist_dir is None:
-            persist_dir = _get_env("CHROMA_DB_DIR", "./chroma_db")
+            persist_dir = config.chroma_db_dir
         store = get_vector_store(persist_dir)
     results = store.similarity_search_with_relevance_scores(query, k=k)
-    # 过滤过低相关性结果（阈值 0.3 以下视为无关）
-    filtered = [doc for doc, score in results if score >= 0.3]
+    threshold = config.similarity_threshold
+    filtered = [doc for doc, score in results if score >= threshold]
     if not filtered:
-        # 全部被过滤时降级处理：返回未过滤的前 2 条作为兜底
-        logger.info("检索结果全部低于相关性阈值，降级返回 Top2")
+        # 空结果降级：全部被过滤时返回 Top2 作为兜底
+        logger.info("检索结果全部低于相关性阈值 (%.2f)，降级返回 Top2", threshold)
         filtered = [doc for doc, _ in results[:2]]
     return filtered
 
